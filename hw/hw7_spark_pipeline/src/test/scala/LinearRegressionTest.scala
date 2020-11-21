@@ -1,6 +1,8 @@
 package org.apache.spark.ml.made
 
-import breeze.linalg.randomDouble._zero
+
+import breeze.linalg._
+import breeze.numerics._
 import breeze.linalg.{*, DenseMatrix, DenseVector}
 import breeze.stats.distributions.{RandBasis, ThreadLocalRandomGenerator}
 import com.google.common.io.Files
@@ -41,6 +43,30 @@ class LinearRegressionTest extends AnyFlatSpec with should.Matchers with WithSpa
     for (i <- predictions.indices) {
       predictions(i) should be(y.valueAt(i) +- delta)
     }
+  }
+
+  "Estimator" should "calculate coefficients" in {
+    val estimator = new LinearRegression()
+      .setInputCol("features")
+      .setOutputCol("features")
+      .setMaxIter(1000)
+      .setLabelCol("y")
+
+    val model = estimator.fit(df)
+
+    sum(model.coefficients.asBreeze - coefficients.asBreeze) should be(0.0 +- delta)
+  }
+
+  "Estimator" should "calculate intercept" in {
+    val estimator = new LinearRegression()
+      .setInputCol("features")
+      .setOutputCol("features")
+      .setMaxIter(1000)
+      .setLabelCol("y")
+
+    val model = estimator.fit(df)
+
+    model.intercept should be(intercept +- delta)
   }
 }
 
