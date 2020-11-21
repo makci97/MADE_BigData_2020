@@ -1,11 +1,14 @@
 package org.apache.spark.ml.made
 
+import breeze.linalg._
+import breeze.numerics._
+
 import java.text.AttributedCharacterIterator.Attribute
 
 import org.apache.spark.ml.attribute.AttributeGroup
 import org.apache.spark.ml.linalg.{DenseVector, Vector, VectorUDT, Vectors}
 import org.apache.spark.ml.param.ParamMap
-import org.apache.spark.ml.param.shared.{HasInputCol, HasOutputCol}
+import org.apache.spark.ml.param.shared.{HasInputCol, HasLabelCol, HasMaxIter, HasOutputCol}
 import org.apache.spark.ml.stat.Summarizer
 import org.apache.spark.ml.util.{DefaultParamsReadable, DefaultParamsReader, DefaultParamsWritable, DefaultParamsWriter, Identifiable, MLReadable, MLReader, MLWritable, MLWriter, SchemaUtils}
 import org.apache.spark.ml.{Estimator, Model}
@@ -15,9 +18,11 @@ import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.{DataFrame, Dataset, Encoder, Row}
 import org.apache.spark.sql.types.StructType
 
-trait LinearRegressionParams extends HasInputCol with HasOutputCol {
+trait LinearRegressionParams extends HasInputCol with HasLabelCol with HasOutputCol with HasMaxIter {
   def setInputCol(value: String) : this.type = set(inputCol, value)
+  def setLabelCol(value: String) : this.type = set(labelCol, value)
   def setOutputCol(value: String) : this.type = set(outputCol, value)
+  def setMaxIter(value: Int) : this.type = set(maxIter, value)
 
 //  protected def validateAndTransformSchema(schema: StructType): StructType = {
 //    SchemaUtils.checkColumnType(schema, getInputCol, new VectorUDT())
@@ -75,25 +80,25 @@ with DefaultParamsWritable {
 
 class LinearRegressionModel private[made](
                            override val uid: String,
-                           val means: DenseVector,
-                           val stds: DenseVector) extends Model[LinearRegressionModel] with LinearRegressionParams { // with MLWritable {
+                           val coefficients: DenseVector,
+                           val intercept: Double) extends Model[LinearRegressionModel] with LinearRegressionParams { // with MLWritable {
 
 
 //  private[made] def this(uid: String) =
 //    this(uid, Vectors.zeros(0).toDense, Vectors.zeros(0).toDense)
 
-//  private[made] def this(means: DenseVector, stds: DenseVector) =
-//    this(Identifiable.randomUID("LinearRegressionModel"), means, stds)
+  private[made] def this(coefficients: DenseVector, intercept: Double) =
+    this(Identifiable.randomUID("LinearRegressionModel"), coefficients, intercept)
 
   override def copy(extra: ParamMap): LinearRegressionModel = ??? // copyValues(new LinearRegressionModel(means, stds))
 
-  override def transform(dataset: Dataset[_]): DataFrame = ??? //{
-//    val transformUdf = dataset.sqlContext.udf.register(uid + "_transform",
-//      (x: Vector) => {
-//        Vectors.fromBreeze((x.asBreeze - means.asBreeze) /:/ stds.asBreeze)
-//      })
-//    dataset.withColumn($(outputCol), transformUdf(dataset($(inputCol))))
-//  }
+  override def transform(dataset: Dataset[_]): DataFrame = {
+    val transformUdf = dataset.sqlContext.udf.register(uid + "_transform",
+      (x: Vector) => {
+        sum(x.asBreeze * coefficients.asBreeze) + intercept
+      })
+    dataset.withColumn($(outputCol), transformUdf(dataset($(inputCol))))
+  }
 
   override def transformSchema(schema: StructType): StructType = ??? // validateAndTransformSchema(schema)
 
