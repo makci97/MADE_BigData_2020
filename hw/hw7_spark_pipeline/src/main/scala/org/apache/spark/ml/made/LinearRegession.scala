@@ -2,25 +2,18 @@ package org.apache.spark.ml.made
 
 import breeze.linalg._
 import breeze.numerics._
-import java.text.AttributedCharacterIterator.Attribute
-
 import breeze.stats.distributions.{RandBasis, ThreadLocalRandomGenerator}
 import org.apache.commons.math3.random.MersenneTwister
 import org.apache.spark.ml.attribute.AttributeGroup
 import org.apache.spark.ml.linalg.{DenseVector, Vector, VectorUDT, Vectors}
 import org.apache.spark.ml.param.ParamMap
 import org.apache.spark.ml.param.shared.{HasInputCol, HasLabelCol, HasMaxIter, HasOutputCol}
-import org.apache.spark.ml.stat.Summarizer
 import org.apache.spark.ml.util.{DefaultParamsReadable, DefaultParamsReader, DefaultParamsWritable, DefaultParamsWriter, Identifiable, MLReadable, MLReader, MLWritable, MLWriter, SchemaUtils}
 import org.apache.spark.ml.{Estimator, Model}
-import org.apache.spark.mllib
-import org.apache.spark.mllib.stat.MultivariateOnlineSummarizer
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
-import org.apache.spark.sql.{DataFrame, Dataset, Encoder, Row}
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.{DataFrame, Dataset, Encoder}
+import org.apache.spark.sql.types.{DoubleType, StructType}
 
-import scala.math.BigDecimal.int2bigDecimal
-import scala.math.BigInt.int2bigInt
 import scala.util.control.Breaks.{break, breakable}
 
 trait LinearRegressionParams extends HasInputCol with HasLabelCol with HasOutputCol with HasMaxIter {
@@ -29,16 +22,19 @@ trait LinearRegressionParams extends HasInputCol with HasLabelCol with HasOutput
   def setOutputCol(value: String) : this.type = set(outputCol, value)
   def setMaxIter(value: Int) : this.type = set(maxIter, value)
 
-//  protected def validateAndTransformSchema(schema: StructType): StructType = {
-//    SchemaUtils.checkColumnType(schema, getInputCol, new VectorUDT())
-//
-//    if (schema.fieldNames.contains($(outputCol))) {
-//      SchemaUtils.checkColumnType(schema, getOutputCol, new VectorUDT())
-//      schema
-//    } else {
-//      SchemaUtils.appendColumn(schema, schema(getInputCol).copy(name = getOutputCol))
-//    }
-//  }
+  protected def validateAndTransformSchema(schema: StructType): StructType = {
+    SchemaUtils.checkColumnType(schema, getInputCol, new VectorUDT())
+    SchemaUtils.checkColumnType(schema, getLabelCol, DoubleType)
+
+    if (schema.fieldNames.contains($(outputCol))) {
+      if ($(outputCol) != $(inputCol)) {
+        SchemaUtils.checkColumnType(schema, getOutputCol, DoubleType)
+      }
+      schema
+    } else {
+      SchemaUtils.appendColumn(schema, schema(getLabelCol).copy(name = getOutputCol))
+    }
+  }
 }
 
 class LinearRegression(override val uid: String) extends Estimator[LinearRegressionModel] with LinearRegressionParams
@@ -90,18 +86,18 @@ with DefaultParamsWritable {
     copyValues(new LinearRegressionModel(Vectors.fromBreeze(coefficients).toDense, intercept)).setParent(this)
   }
 
-  override def copy(extra: ParamMap): Estimator[LinearRegressionModel] = ??? // defaultCopy(extra)
+  override def copy(extra: ParamMap): Estimator[LinearRegressionModel] = defaultCopy(extra)
 
-  override def transformSchema(schema: StructType): StructType = ??? // validateAndTransformSchema(schema)
+  override def transformSchema(schema: StructType): StructType = validateAndTransformSchema(schema)
 
 }
 
-//object LinearRegression extends DefaultParamsReadable[LinearRegression]
+object LinearRegression extends DefaultParamsReadable[LinearRegression]
 
 class LinearRegressionModel private[made](
                            override val uid: String,
                            val coefficients: DenseVector,
-                           val intercept: Double) extends Model[LinearRegressionModel] with LinearRegressionParams { // with MLWritable {
+                           val intercept: Double) extends Model[LinearRegressionModel] with LinearRegressionParams { //with MLWritable {
 
 
 //  private[made] def this(uid: String) =
@@ -110,7 +106,7 @@ class LinearRegressionModel private[made](
   private[made] def this(coefficients: DenseVector, intercept: Double) =
     this(Identifiable.randomUID("LinearRegressionModel"), coefficients, intercept)
 
-  override def copy(extra: ParamMap): LinearRegressionModel = ??? // copyValues(new LinearRegressionModel(means, stds))
+  override def copy(extra: ParamMap): LinearRegressionModel = copyValues(new LinearRegressionModel(coefficients, intercept))
 
   override def transform(dataset: Dataset[_]): DataFrame = {
     val transformUdf = dataset.sqlContext.udf.register(uid + "_transform",
@@ -120,7 +116,7 @@ class LinearRegressionModel private[made](
     dataset.withColumn($(outputCol), transformUdf(dataset($(inputCol))))
   }
 
-  override def transformSchema(schema: StructType): StructType = ??? // validateAndTransformSchema(schema)
+  override def transformSchema(schema: StructType): StructType = validateAndTransformSchema(schema)
 
 //  override def write: MLWriter = new DefaultParamsWriter(this) {
 //    override protected def saveImpl(path: String): Unit = {
