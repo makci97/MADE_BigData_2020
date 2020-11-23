@@ -85,6 +85,23 @@ class LinearRegressionTest extends AnyFlatSpec with should.Matchers with WithSpa
 
     validateModel(model)
   }
+
+  "Estimator" should "work after re-read" in {
+    val pipeline = new Pipeline().setStages(Array(
+      new LinearRegression()
+        .setInputCol("features")
+        .setOutputCol("features")
+        .setMaxIter(maxIter)
+        .setLabelCol("y")
+    ))
+    val tmpFolder = Files.createTempDir()
+
+    pipeline.write.overwrite().save(tmpFolder.getAbsolutePath)
+
+    val model = Pipeline.load(tmpFolder.getAbsolutePath).fit(df).stages(0).asInstanceOf[LinearRegressionModel]
+
+    validateModel(model)
+  }
 }
 
 object LinearRegressionTest extends WithSpark{
