@@ -2,9 +2,10 @@ package org.apache.spark.ml.made
 
 import breeze.linalg._
 import breeze.numerics._
-
 import java.text.AttributedCharacterIterator.Attribute
 
+import breeze.stats.distributions.{RandBasis, ThreadLocalRandomGenerator}
+import org.apache.commons.math3.random.MersenneTwister
 import org.apache.spark.ml.attribute.AttributeGroup
 import org.apache.spark.ml.linalg.{DenseVector, Vector, VectorUDT, Vectors}
 import org.apache.spark.ml.param.ParamMap
@@ -17,6 +18,10 @@ import org.apache.spark.mllib.stat.MultivariateOnlineSummarizer
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.{DataFrame, Dataset, Encoder, Row}
 import org.apache.spark.sql.types.StructType
+
+import scala.math.BigDecimal.int2bigDecimal
+import scala.math.BigInt.int2bigInt
+import scala.util.control.Breaks.{break, breakable}
 
 trait LinearRegressionParams extends HasInputCol with HasLabelCol with HasOutputCol with HasMaxIter {
   def setInputCol(value: String) : this.type = set(inputCol, value)
@@ -41,34 +46,49 @@ with DefaultParamsWritable {
 
   def this() = this(Identifiable.randomUID("LinearRegression"))
 
-  override def fit(dataset: Dataset[_]): LinearRegressionModel = ??? // {
-//    // used to convert untyped dataframes to datasets with vectors
-//    implicit val encoder: Encoder[Vector] = ExpressionEncoder()
-//
-//    val vectors: Dataset[Vector] = dataset.select(dataset($(inputCol)).as[Vector])
-//
-////    val dim: Int = AttributeGroup.fromStructField((dataset.schema($(inputCol)))).numAttributes.getOrElse(
-////      vectors.first().size
-////    )
-//
-//    val summary = vectors.rdd.mapPartitions((data: Iterator[Vector]) => {
-//      val summarizer = new MultivariateOnlineSummarizer()
-//      data.foreach(v => summarizer.add(mllib.linalg.Vectors.fromBreeze(v.asBreeze)))
-//      Iterator(summarizer)
-//    }).reduce(_ merge _)
-//
-//    copyValues(new LinearRegressionModel(
-//      summary.mean.asML.toDense,
-//      Vectors.fromBreeze(breeze.numerics.sqrt(summary.variance.asBreeze)).toDense
-//    )).setParent(this)
-//
-//
-////    val Row(row: Row) = dataset
-////      .select(Summarizer.metrics("mean", "std").summary(dataset($(inputCol))))
-////      .first()
-////
-////    copyValues(new LinearRegressionModel(row.getAs[Vector](0).toDense, row.getAs[Vector](1).toDense)).setParent(this)
-//  }
+  override def fit(dataset: Dataset[_]): LinearRegressionModel = {
+    // used to convert untyped dataframes to datasets with vectors
+    implicit val encoder: Encoder[Vector] = ExpressionEncoder()
+    implicit val dEncoder: Encoder[Double] = ExpressionEncoder()
+
+    val vectors: Dataset[(Vector, Double)] = dataset.select(dataset($(inputCol)).as[Vector], dataset($(labelCol)).as[Double])
+    val dim: Int = AttributeGroup.fromStructField((dataset.schema($(inputCol)))).numAttributes.getOrElse(
+      vectors.first()._1.size
+    )
+    val size = dataset.count()
+
+    // init coefficients
+    implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(0)))
+    val Gausian = breeze.stats.distributions.Gaussian(0.0, 0.1)
+    var coefficients = breeze.linalg.DenseVector.rand(dim, Gausian)
+    var intercept: Double = 0.0
+
+    breakable {
+      for (i <- 0 to $(maxIter)) {
+        val sum_b_w_error = vectors.rdd.map((features_y) => {
+          val features = features_y._1.asBreeze
+          val y = features_y._2
+          val error = sum(features * coefficients) + intercept - y
+          (error, error * features)
+        }).reduce((a, b) => {
+          (a._1 + b._1, a._2 + b._2)
+        })
+
+        val sum_intercept_error = sum_b_w_error._1
+        val sum_coefficients_error = sum_b_w_error._2
+
+        val grad_norm = sum(abs(sum_coefficients_error)) + abs(sum_intercept_error)
+        if (grad_norm / size < 0.00001){
+          break
+        }
+
+        intercept -= 1.0 / size * sum_intercept_error
+        coefficients -= 1.0 / size * sum_coefficients_error
+      }
+    }
+
+    copyValues(new LinearRegressionModel(Vectors.fromBreeze(coefficients).toDense, intercept)).setParent(this)
+  }
 
   override def copy(extra: ParamMap): Estimator[LinearRegressionModel] = ??? // defaultCopy(extra)
 
