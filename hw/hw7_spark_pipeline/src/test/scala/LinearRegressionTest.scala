@@ -27,13 +27,7 @@ class LinearRegressionTest extends AnyFlatSpec with should.Matchers with WithSpa
   lazy val y: DenseVector[Double] = LinearRegressionTest._y
   lazy val df: DataFrame = LinearRegressionTest._final_df
 
-
-  "Model" should "transform input data to prediction" in {
-    val model = new LinearRegressionModel(
-      coefficients = coefficients.toDense,
-      intercept = intercept
-    ).setInputCol("features").setOutputCol("features").setMaxIter(maxIter)
-
+  private def validateModel(model: ml.Transformer) = {
     // last column "features" replaced with predictions
     val predictions: Array[Double] = model.transform(df).collect().map((x: Row) => {
       x.getAs[Double](df.columns.length - 1)
@@ -43,6 +37,17 @@ class LinearRegressionTest extends AnyFlatSpec with should.Matchers with WithSpa
     for (i <- predictions.indices) {
       predictions(i) should be(y.valueAt(i) +- delta)
     }
+  }
+
+  "Model" should "transform input data to prediction" in {
+    val model = new LinearRegressionModel(
+      coefficients = coefficients.toDense,
+      intercept = intercept
+    ).setInputCol("features")
+      .setOutputCol("features")
+      .setMaxIter(maxIter)
+
+    validateModel(model)
   }
 
   "Estimator" should "calculate coefficients" in {
@@ -67,6 +72,18 @@ class LinearRegressionTest extends AnyFlatSpec with should.Matchers with WithSpa
     val model = estimator.fit(df)
 
     model.intercept should be(intercept +- delta)
+  }
+
+  "Estimator" should "produce functional model" in {
+    val estimator = new LinearRegression()
+      .setInputCol("features")
+      .setOutputCol("features")
+      .setMaxIter(maxIter)
+      .setLabelCol("y")
+
+    val model = estimator.fit(df)
+
+    validateModel(model)
   }
 }
 
