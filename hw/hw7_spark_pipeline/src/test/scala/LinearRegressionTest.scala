@@ -59,7 +59,7 @@ class LinearRegressionTest extends AnyFlatSpec with should.Matchers with WithSpa
 
     val model = estimator.fit(df)
 
-    sum(model.coefficients.asBreeze - coefficients.asBreeze) should be(0.0 +- delta)
+    sum(abs(model.coefficients.asBreeze - coefficients.asBreeze)) should be(0.0 +- delta)
   }
 
   "Estimator" should "calculate intercept" in {
