@@ -97,14 +97,14 @@ object LinearRegression extends DefaultParamsReadable[LinearRegression]
 class LinearRegressionModel private[made](
                            override val uid: String,
                            val coefficients: DenseVector,
-                           val intercept: Double) extends Model[LinearRegressionModel] with LinearRegressionParams { //with MLWritable {
+                           val intercept: Double) extends Model[LinearRegressionModel] with LinearRegressionParams with MLWritable {
 
 
 //  private[made] def this(uid: String) =
 //    this(uid, Vectors.zeros(0).toDense, Vectors.zeros(0).toDense)
 
-  private[made] def this(coefficients: DenseVector, intercept: Double) =
-    this(Identifiable.randomUID("LinearRegressionModel"), coefficients, intercept)
+  private[made] def this(coefficients: Vector, intercept: Double) =
+    this(Identifiable.randomUID("LinearRegressionModel"), coefficients.toDense, intercept)
 
   override def copy(extra: ParamMap): LinearRegressionModel = copyValues(new LinearRegressionModel(coefficients, intercept))
 
@@ -118,30 +118,34 @@ class LinearRegressionModel private[made](
 
   override def transformSchema(schema: StructType): StructType = validateAndTransformSchema(schema)
 
-//  override def write: MLWriter = new DefaultParamsWriter(this) {
-//    override protected def saveImpl(path: String): Unit = {
-//      super.saveImpl(path)
-//
-//      sqlContext.createDataFrame(Seq(means.toDense -> stds.toDense)).write.json(path + "/vectors")
-//      }
-//  }
+  override def write: MLWriter = new DefaultParamsWriter(this) {
+    override protected def saveImpl(path: String): Unit = {
+      super.saveImpl(path)
+
+
+      val data = coefficients.asInstanceOf[Vector] -> intercept.asInstanceOf[Double]
+
+      sqlContext.createDataFrame(Seq(data)).write.parquet(path + "/data")
+      }
+  }
 }
 
-//object LinearRegressionModel extends MLReadable[LinearRegressionModel] {
-//  override def read: MLReader[LinearRegressionModel] = new MLReader[LinearRegressionModel] {
-//    override def load(path: String): LinearRegressionModel = {
-////      val instance: LinearRegressionModel = DefaultParamsReader.loadParamsInstance[LinearRegressionModel](path, sc)
-//
-//      val vectors = sqlContext.read.json(path + "/vectors")
-//
-//      // used to convert untyped dataframes to datasets with vectors
-//      implicit val encoder: Encoder[DenseVector] = ExpressionEncoder()
-//
-//      val (means, stds) = vectors.select(vectors("_1").as[DenseVector], vectors("_2").as[DenseVector]).first()
-//
-////      instance.copyValues(new LinearRegressionModel(means.toDense, stds.toDense))
-//      val model = new LinearRegressionModel(means.toDense, stds.toDense)
-//      model
-//    }
-//  }
-//}
+object LinearRegressionModel extends MLReadable[LinearRegressionModel] {
+  override def read: MLReader[LinearRegressionModel] = new MLReader[LinearRegressionModel] {
+    override def load(path: String): LinearRegressionModel = {
+      val metadata = DefaultParamsReader.loadMetadata(path, sc)
+
+      val vectors = sqlContext.read.parquet(path + "/data")
+
+      // Used to convert untyped dataframes to datasets with vectors
+      implicit val encoder : Encoder[Vector] = ExpressionEncoder()
+      implicit val dEncoder : Encoder[Double] = ExpressionEncoder()
+
+      val (coefficients, intercept) = vectors.select(vectors("_1").as[Vector], vectors("_2").as[Double]).first()
+
+      val model = new LinearRegressionModel(coefficients, intercept)
+      metadata.getAndSetParams(model)
+      model
+    }
+  }
+}
