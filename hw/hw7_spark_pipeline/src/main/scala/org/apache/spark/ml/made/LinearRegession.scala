@@ -52,6 +52,7 @@ with DefaultParamsWritable {
       vectors.first()._1.size
     )
     val size = dataset.count()
+    val _batchSize = 100
 
     // init coefficients
     implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(0)))
@@ -61,25 +62,35 @@ with DefaultParamsWritable {
 
     breakable {
       for (i <- 0 to $(maxIter)) {
-        val sum_b_w_error = vectors.rdd.map((features_y) => {
-          val features = features_y._1.asBreeze
-          val y = features_y._2
-          val error = sum(features * coefficients) + intercept - y
-          (error, error * features)
+
+        val sum_b_w_error = vectors.rdd.mapPartitions((features_y_data: Iterator[(Vector, Double)]) => {
+          var sum_intercept_error: Double = 0.0
+          var sum_coefficients_error = breeze.linalg.DenseVector.zeros[Double](dim)
+
+          for (group <- features_y_data.grouped(_batchSize)) {
+            val features_matrix: DenseMatrix[Double] = breeze.linalg.DenseVector(group.map(pair => pair._1.toArray.toIterator).reduce(_++_).toArray).toDenseMatrix.reshape(dim, group.length).t
+            val y_vector = breeze.linalg.DenseVector(group.toArray.map(pair => pair._2))
+            val ones_vector = breeze.linalg.DenseVector.ones[Double](features_matrix.rows)
+            val error_vector: breeze.linalg.DenseVector[Double] = (features_matrix * coefficients + ones_vector * intercept - y_vector).toDenseVector
+            val delta = (error_vector.toDenseMatrix * features_matrix).toDenseVector
+            sum_coefficients_error = sum_coefficients_error + delta
+            sum_intercept_error = sum_intercept_error + sum(error_vector)
+          }
+          Iterator((sum_intercept_error, sum_coefficients_error))
         }).reduce((a, b) => {
           (a._1 + b._1, a._2 + b._2)
         })
 
-        val sum_intercept_error = sum_b_w_error._1
-        val sum_coefficients_error = sum_b_w_error._2
+        val epoch_sum_intercept_error = sum_b_w_error._1
+        val epoch_sum_coefficients_error = sum_b_w_error._2
 
-        val grad_norm = sum(abs(sum_coefficients_error)) + abs(sum_intercept_error)
-        if (grad_norm / size < 0.00001){
+        intercept -= 1.0 / size * epoch_sum_intercept_error
+        coefficients -= 1.0 / size * epoch_sum_coefficients_error
+
+        val grad_norm = sum(abs(epoch_sum_coefficients_error)) + abs(epoch_sum_intercept_error)
+        if (grad_norm/size < 0.00001){
           break
         }
-
-        intercept -= 1.0 / size * sum_intercept_error
-        coefficients -= 1.0 / size * sum_coefficients_error
       }
     }
 
